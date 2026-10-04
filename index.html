@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>Post-game</title>
+<style>
+  :root {
+    --bg: #f3f1ec; --fg: #1b1b1d; --muted: #6d6a64; --line: #dcd8cf; --card: #fbfaf7;
+    --accent: #FB4F14;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1012; --fg: #e8e5de; --muted: #8d8a83; --line: #26272b; --card: #17181b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1012; --fg: #e8e5de; --muted: #8d8a83; --line: #26272b; --card: #17181b;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 640px; margin: 0 auto; padding: 12px 16px 64px; }
+
+  .teams { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 12px; scrollbar-width: none; }
+  .teams::-webkit-scrollbar { display: none; }
+  .teams button {
+    flex: none; font: inherit; font-weight: 600; font-size: 15px;
+    padding: 9px 16px; border-radius: 999px; border: 1.5px solid var(--line);
+    background: transparent; color: var(--fg);
+  }
+  .teams button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .teams button:focus-visible, .more:focus-visible, .paste button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .status { color: var(--muted); font-size: 14px; padding: 8px 0 4px; }
+  .status.err { color: #e5534b; }
+
+  h1.game { font: 700 22px/1.2 -apple-system, BlinkMacSystemFont, sans-serif; margin: 12px 0 4px; letter-spacing: -0.01em; }
+  .src { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  .src a { color: var(--accent); text-decoration: none; }
+
+  .box { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 20px; overflow-x: auto; font-size: 14px; }
+  .box h3 { margin: 0 0 6px; font-size: 15px; }
+  .box p { margin: 6px 0; }
+  .box table { border-collapse: collapse; width: 100%; margin: 6px 0 10px; font-variant-numeric: tabular-nums; }
+  .box th, .box td { padding: 5px 8px; text-align: left; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .box th { color: var(--muted); font-weight: 600; }
+  .box hr { border: 0; border-top: 1px solid var(--line); }
+
+  .c { padding: 14px 0; border-top: 1px solid var(--line); font-family: Georgia, "Iowan Old Style", serif; font-size: 17px; line-height: 1.5; }
+  .c .by { font: 600 13px -apple-system, BlinkMacSystemFont, sans-serif; color: var(--muted); margin-bottom: 4px; }
+  .c p { margin: 0 0 8px; }
+  .c p:last-child { margin-bottom: 0; }
+  .c blockquote { margin: 6px 0; padding-left: 12px; border-left: 3px solid var(--accent); color: var(--muted); }
+  .c a { color: var(--accent); }
+
+  .more { display: block; width: 100%; margin-top: 16px; padding: 12px; font: inherit; font-weight: 600; color: var(--fg); background: transparent; border: 1.5px solid var(--line); border-radius: 10px; }
+
+  details.paste { margin-top: 32px; border-top: 1px solid var(--line); padding-top: 12px; color: var(--muted); font-size: 14px; }
+  details.paste summary { cursor: pointer; padding: 6px 0; }
+  details.paste textarea { width: 100%; height: 120px; margin: 8px 0; padding: 10px; background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; font: 13px ui-monospace, Menlo, monospace; }
+  details.paste button { font: inherit; font-weight: 600; padding: 9px 16px; border-radius: 8px; border: 0; background: var(--accent); color: #fff; }
+</style>
+</head>
+<body>
+<main>
+  <nav class="teams" id="teams" aria-label="Team"></nav>
+  <div class="status" id="status">Pick a team.</div>
+  <section id="out"></section>
+
+  <details class="paste" id="paste">
+    <summary>Fetch failed? Paste a feed instead</summary>
+    <p>Open the RSS link in a place that works for you, copy the whole XML, and paste it here. Works for the thread's comment feed.</p>
+    <textarea id="raw" placeholder="&lt;?xml version=..."></textarea>
+    <button id="renderPaste">Show comments</button>
+  </details>
+</main>
+
+<script>
+/* Edit this list to add teams. sub = subreddit, q = text that must appear in the thread title. */
+const TEAMS = [
+  { name: "Bengals",  sub: "nfl", q: "Bengals",  accent: "#FB4F14" },
+  { name: "Patriots", sub: "nfl", q: "Patriots", accent: "#3B6FD4" },
+  { name: "Purdue",   sub: "CFB", q: "Purdue",   accent: "#CFB991" }
+];
+const PAGE = 20;               // comments per page
+const HOST = "https://www.reddit.com";
+
+const $ = id => document.getElementById(id);
+const statusEl = $("status"), out = $("out");
+let comments = [], shown = 0, abortCtl = null;
+
+/* ---------- team picker ---------- */
+TEAMS.forEach((t, i) => {
+  const b = document.createElement("button");
+  b.textContent = t.name; b.setAttribute("aria-pressed", "false");
+  b.onclick = () => select(i);
+  $("teams").appendChild(b);
+});
+function select(i) {
+  [...$("teams").children].forEach((b, j) => b.setAttribute("aria-pressed", String(i === j)));
+  try { localStorage.setItem("pg-team", String(i)); } catch (e) {}
+  load(TEAMS[i]);
+}
+
+/* ---------- fetch + parse ---------- */
+async function getXML(url, signal) {
+  const r = await fetch(url, { signal });
+  if (!r.ok) throw new Error("Reddit returned " + r.status);
+  const txt = await r.text();
+  const doc = new DOMParser().parseFromString(txt, "application/xml");
+  if (doc.querySelector("parsererror")) throw new Error("Response was not a valid feed");
+  return doc;
+}
+const entries = doc => [...doc.getElementsByTagName("entry")];
+const tx = (el, tag) => (el.getElementsByTagName(tag)[0] || {}).textContent || "";
+const linkOf = e => { const l = e.getElementsByTagName("link")[0]; return l ? l.getAttribute("href") : ""; };
+
+async function load(team) {
+  if (abortCtl) abortCtl.abort();
+  abortCtl = new AbortController();
+  const signal = abortCtl.signal;
+  document.documentElement.style.setProperty("--accent", team.accent);
+  out.innerHTML = ""; comments = []; shown = 0;
+  setStatus("Finding the latest thread…");
+  try {
+    const search = `${HOST}/r/${team.sub}/search.rss?q=${encodeURIComponent('title:"Post Game Thread" ' + team.q)}&restrict_sr=on&sort=new&limit=1`;
+    const sdoc = await getXML(search, signal);
+    const first = entries(sdoc)[0];
+    if (!first) throw new Error("No post-game thread found for " + team.name);
+    const threadUrl = linkOf(first);
+    setStatus("Loading comments…");
+    const cdoc = await getXML(threadUrl.replace(/\/?$/, "/") + ".rss?sort=top&limit=100", signal);
+    render(cdoc, threadUrl);
+  } catch (e) {
+    if (e.name === "AbortError") return;
+    setStatus(explain(e), true);
+    $("paste").open = true;
+  }
+}
+function explain(e) {
+  if (e instanceof TypeError) return "The browser blocked the request (CORS) or you're offline. Use the paste option below.";
+  return e.message + ". Use the paste option below if it keeps failing.";
+}
+
+/* ---------- rendering ---------- */
+const OK = new Set(["P","STRONG","EM","B","I","BR","HR","UL","OL","LI","BLOCKQUOTE","CODE","PRE","TABLE","THEAD","TBODY","TR","TH","TD","H1","H2","H3","H4","DEL","SPAN","DIV","A"]);
+function clean(html) {
+  const src = new DOMParser().parseFromString(html, "text/html").body;
+  const walk = (node, parent) => {
+    node.childNodes.forEach(n => {
+      if (n.nodeType === 3) { parent.appendChild(document.createTextNode(n.nodeValue)); return; }
+      if (n.nodeType !== 1) return;
+      if (!OK.has(n.tagName)) { walk(n, parent); return; }       /* unwrap unknown tags, drops img/script/etc. */
+      const el = document.createElement(n.tagName === "H1" || n.tagName === "H2" ? "h3" : n.tagName.toLowerCase());
+      if (n.tagName === "A") {
+        const h = n.getAttribute("href") || "";
+        if (/^https?:\/\//i.test(h)) { el.href = h; el.target = "_blank"; el.rel = "noopener noreferrer"; }
+      }
+      walk(n, el); parent.appendChild(el);
+    });
+  };
+  const frag = document.createElement("div");
+  walk(src, frag);
+  return frag;
+}
+
+function render(doc, threadUrl) {
+  const all = entries(doc);
+  if (!all.length) { setStatus("Feed had no entries.", true); return; }
+  const post = all[0];
+  const h = document.createElement("h1"); h.className = "game"; h.textContent = tx(post, "title").replace(/^Post Game Thread:\s*/i, "");
+  const src = document.createElement("div"); src.className = "src";
+  src.innerHTML = `<a target="_blank" rel="noopener noreferrer"></a>`;
+  const a = src.firstChild; a.textContent = "Open on Reddit"; a.href = threadUrl || linkOf(post);
+  out.append(h, src);
+
+  const body = clean(tx(post, "content"));
+  if (body.textContent.trim()) { const box = document.createElement("div"); box.className = "box"; box.appendChild(body); out.appendChild(box); }
+
+  comments = all.slice(1).map(e => ({
+    by: (tx(e.getElementsByTagName("author")[0] || e, "name") || "").replace(/^\/u\//, ""),
+    body: tx(e, "content")
+  })).filter(c => c.body);
+  const list = document.createElement("div"); list.id = "list"; out.appendChild(list);
+  const more = document.createElement("button"); more.className = "more"; more.id = "more"; more.textContent = "More comments";
+  more.onclick = showMore; out.appendChild(more);
+  setStatus(comments.length + " top comments");
+  showMore();
+}
+
+function showMore() {
+  const list = $("list");
+  comments.slice(shown, shown + PAGE).forEach(c => {
+    const d = document.createElement("article"); d.className = "c";
+    const by = document.createElement("div"); by.className = "by"; by.textContent = c.by;
+    d.append(by, clean(c.body));
+    list.appendChild(d);
+  });
+  shown += PAGE;
+  if (shown >= comments.length) $("more").style.display = "none";
+}
+
+function setStatus(t, err) { statusEl.textContent = t; statusEl.className = "status" + (err ? " err" : ""); }
+
+/* ---------- paste fallback ---------- */
+$("renderPaste").onclick = () => {
+  const txt = $("raw").value.trim();
+  const doc = new DOMParser().parseFromString(txt, "application/xml");
+  if (!txt || doc.querySelector("parsererror")) { setStatus("That doesn't look like a valid feed.", true); return; }
+  out.innerHTML = ""; comments = []; shown = 0;
+  render(doc, "");
+};
+
+/* ---------- start ---------- */
+let start = 0;
+try { start = parseInt(localStorage.getItem("pg-team") || "0", 10) || 0; } catch (e) {}
+select(Math.min(start, TEAMS.length - 1));
+</script>
+</body>
+</html>
